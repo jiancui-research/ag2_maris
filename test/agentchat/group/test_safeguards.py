@@ -343,11 +343,11 @@ class TestApplySafeguards:
         agent.name = "test_agent"
         agent.hook_lists = {
             "process_message_before_send": [],
-            "process_tool_input": [],
-            "process_tool_output": [],
-            "process_llm_input": [],
-            "process_llm_output": [],
-            "process_human_input": [],
+            "safeguard_tool_input_process": [],
+            "safeguard_tool_output_process": [],
+            "safeguard_llm_input_process": [],
+            "safeguard_llm_output_process": [],
+            "safeguard_human_input_process": [],
         }
         return agent
 
