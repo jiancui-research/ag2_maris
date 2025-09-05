@@ -372,11 +372,11 @@ class ConversableAgent(LLMAgent):
             "process_message_before_send": [],
             "update_agent_state": [],
             # Safeguard hooks for monitoring agent interactions
-            "process_tool_input": [],  # Hook for processing tool inputs before execution
-            "process_tool_output": [],  # Hook for processing tool outputs after execution
-            "process_llm_input": [],  # Hook for processing LLM inputs before sending
-            "process_llm_output": [],  # Hook for processing LLM outputs after receiving
-            "process_human_input": [],  # Hook for processing human inputs
+            "safeguard_tool_input_process": [],  # Hook for processing tool inputs before execution
+            "safeguard_tool_output_process": [],  # Hook for processing tool outputs after execution
+            "safeguard_llm_input_process": [],  # Hook for processing LLM inputs before sending
+            "safeguard_llm_output_process": [],  # Hook for processing LLM outputs after receiving
+            "safeguard_human_input_process": [],  # Hook for processing human inputs
         }
 
         # Associate agent update state hooks
@@ -2179,7 +2179,7 @@ class ConversableAgent(LLMAgent):
         if extracted_response is not None:
             processed_extracted_response = self._process_llm_output(extracted_response)
             if processed_extracted_response is None:
-                raise ValueError("process_llm_output hook returned None")
+                raise ValueError("safeguard_llm_output_process hook returned None")
 
         return (False, None) if extracted_response is None else (True, extracted_response)
 
@@ -2443,7 +2443,7 @@ class ConversableAgent(LLMAgent):
             # Hook: Process tool input before execution
             processed_call = self._process_tool_input(function_call)
             if processed_call is None:
-                raise ValueError("process_tool_input hook returned None")
+                raise ValueError("safeguard_tool_input_process hook returned None")
 
             tool_call_id = tool_call.get("id", None)
             func = self._function_map.get(processed_call.get("name", None), None)
@@ -2456,7 +2456,7 @@ class ConversableAgent(LLMAgent):
             # Hook: Process tool output before returning
             processed_return = self._process_tool_output(func_return)
             if processed_return is None:
-                raise ValueError("process_tool_output hook returned None")
+                raise ValueError("safeguard_tool_output_process hook returned None")
 
             content = processed_return.get("content", "")
             if content is None:
@@ -2998,7 +2998,7 @@ class ConversableAgent(LLMAgent):
         # Process the human input through hooks
         processed_reply = self._process_human_input(reply)
         if processed_reply is None:
-            raise ValueError("process_human_input hook returned None")
+            raise ValueError("safeguard_human_input_process hook returned None")
 
         self._human_input.append(processed_reply)
         return processed_reply
@@ -3835,7 +3835,7 @@ class ConversableAgent(LLMAgent):
 
     def _process_tool_input(self, tool_input: dict[str, Any]) -> dict[str, Any] | None:
         """Process tool input through registered hooks."""
-        hook_list = self.hook_lists["process_tool_input"]
+        hook_list = self.hook_lists["safeguard_tool_input_process"]
 
         # If no hooks are registered, allow the tool input
         if len(hook_list) == 0:
@@ -3852,7 +3852,7 @@ class ConversableAgent(LLMAgent):
 
     def _process_tool_output(self, response: dict[str, Any]) -> dict[str, Any]:
         """Process tool output through registered hooks"""
-        hook_list = self.hook_lists["process_tool_output"]
+        hook_list = self.hook_lists["safeguard_tool_output_process"]
 
         # If no hooks are registered, return original response
         if len(hook_list) == 0:
@@ -3867,7 +3867,7 @@ class ConversableAgent(LLMAgent):
 
     def _process_llm_input(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
         """Process messages before sending to LLM through registered hooks."""
-        hook_list = self.hook_lists["process_llm_input"]
+        hook_list = self.hook_lists["safeguard_llm_input_process"]
 
         # If no hooks registered, allow the messages through
         if len(hook_list) == 0:
@@ -3884,7 +3884,7 @@ class ConversableAgent(LLMAgent):
 
     def _process_llm_output(self, response: str | dict[str, Any]) -> str | dict[str, Any]:
         """Process LLM response through registered hooks"""
-        hook_list = self.hook_lists["process_llm_output"]
+        hook_list = self.hook_lists["safeguard_llm_output_process"]
 
         # If no hooks registered, return original response
         if len(hook_list) == 0:
@@ -3899,7 +3899,7 @@ class ConversableAgent(LLMAgent):
 
     def _process_human_input(self, human_input: str) -> str | None:
         """Process human input through registered hooks."""
-        hook_list = self.hook_lists["process_human_input"]
+        hook_list = self.hook_lists["safeguard_human_input_process"]
 
         # If no hooks registered, allow the input through
         if len(hook_list) == 0:
