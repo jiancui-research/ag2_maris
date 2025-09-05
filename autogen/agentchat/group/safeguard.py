@@ -8,9 +8,12 @@ import json
 import re
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from termcolor import colored
 
+from ...events.base_event import BaseEvent, wrap_event
+from ...io.base import IOStream
 from .guardrails import LLMGuardrail, RegexGuardrail
 from .targets.transition_target import TransitionTarget
 
@@ -19,6 +22,112 @@ if TYPE_CHECKING:
     from ..agent import Agent
     from ..conversable_agent import ConversableAgent
     from ..groupchat import GroupChatManager
+
+
+@wrap_event
+class SafeguardEvent(BaseEvent):
+    """Event for safeguard actions"""
+    
+    event_type: str  # e.g., "load", "check", "violation", "action"
+    message: str
+    source_agent: str | None = None
+    target_agent: str | None = None
+    guardrail_type: str | None = None
+    action: str | None = None
+    content_preview: str | None = None
+    
+    def __init__(
+        self,
+        *,
+        uuid: UUID | None = None,
+        event_type: str,
+        message: str,
+        source_agent: str | None = None,
+        target_agent: str | None = None,
+        guardrail_type: str | None = None,
+        action: str | None = None,
+        content_preview: str | None = None,
+    ):
+        super().__init__(
+            uuid=uuid,
+            event_type=event_type,
+            message=message,
+            source_agent=source_agent,
+            target_agent=target_agent,
+            guardrail_type=guardrail_type,
+            action=action,
+            content_preview=content_preview,
+        )
+    
+    def print(self, f: Callable[..., Any] | None = None) -> None:
+        f = f or print
+        
+        # Choose color based on event type
+        color = "green"
+        if self.event_type == "load":
+            color = "green"
+        elif self.event_type == "check":
+            color = "cyan"
+        elif self.event_type == "violation":
+            color = "red"
+        elif self.event_type == "action":
+            color = "yellow"
+        
+        # Choose emoji based on event type
+        emoji = ""
+        if self.event_type == "load":
+            emoji = "✅"
+        elif self.event_type == "check":
+            emoji = "🔍"
+        elif self.event_type == "violation":
+            emoji = "🛡️"
+        elif self.event_type == "action":
+            if self.action == "block":
+                emoji = "🚨"
+            elif self.action == "mask":
+                emoji = "🎭"
+            elif self.action == "warning":
+                emoji = "⚠️"
+            else:
+                emoji = "⚙️"
+        
+        # Create header based on event type (skip for load events)
+        if self.event_type == "check":
+            header = f"***** Safeguard Check: {self.message} *****"
+            f(colored(header, color), flush=True)
+        elif self.event_type == "violation":
+            header = f"***** Safeguard Violation: DETECTED *****"
+            f(colored(header, color), flush=True)
+        elif self.event_type == "action":
+            header = f"***** Safeguard Enforcement Action: {self.action.upper() if self.action else 'APPLIED'} *****"
+            f(colored(header, color), flush=True)
+        
+        # Format the output
+        output_parts = [f"{emoji} {self.message}" if emoji else self.message]
+        
+        if self.source_agent and self.target_agent:
+            output_parts.append(f"  • From: {self.source_agent}")
+            output_parts.append(f"  • To: {self.target_agent}")
+        elif self.source_agent:
+            output_parts.append(f"  • Agent: {self.source_agent}")
+        
+        if self.guardrail_type:
+            output_parts.append(f"  • Guardrail: {self.guardrail_type}")
+        
+        if self.action:
+            output_parts.append(f"  • Action: {self.action}")
+            
+        if self.content_preview:
+            # Replace actual newlines with \n for display
+            content_display = self.content_preview.replace('\n', '\\n').replace('\r', '\\r')
+            output_parts.append(f"  • Content: {content_display}")
+        
+        f(colored("\n".join(output_parts), color), flush=True)
+        
+        # Print footer with matching length (skip for load events)
+        if self.event_type in ["check", "violation", "action"]:
+            footer = "*" * len(header)
+            f(colored(footer, color), flush=True)
 
 
 class SafeguardManager:
@@ -63,12 +172,34 @@ class SafeguardManager:
         self.inter_agent_rules = self._parse_inter_agent_rules()
         self.environment_rules = self._parse_environment_rules()
 
-        print(
-            colored(
-                f"✅ Loaded {len(self.inter_agent_rules)} inter-agent and {len(self.environment_rules)} environment safeguard rules",
-                "green",
-            )
+        # Send load event
+        self._send_safeguard_event(
+            event_type="load",
+            message=f"Loaded {len(self.inter_agent_rules)} inter-agent and {len(self.environment_rules)} environment safeguard rules"
         )
+
+    def _send_safeguard_event(
+        self,
+        event_type: str,
+        message: str,
+        source_agent: str | None = None,
+        target_agent: str | None = None,
+        guardrail_type: str | None = None,
+        action: str | None = None,
+        content_preview: str | None = None,
+    ) -> None:
+        """Send a safeguard event to the IOStream."""
+        iostream = IOStream.get_default()
+        event = SafeguardEvent(
+            event_type=event_type,
+            message=message,
+            source_agent=source_agent,
+            target_agent=target_agent,
+            guardrail_type=guardrail_type,
+            action=action,
+            content_preview=content_preview,
+        )
+        iostream.send(event)
 
     def _load_manifest(self, manifest: dict[str, Any] | str) -> dict[str, Any]:
         """Load manifest from file or use provided dict."""
@@ -372,16 +503,11 @@ class SafeguardManager:
                 if "custom_prompt" in rule:
                     # Custom prompt for LLM guardrail
                     condition = rule["custom_prompt"]
-                    print(
-                        colored(
-                            f"📝 Using custom prompt for LLM guardrail: {rule['message_src']} -> {rule['message_dst']}",
-                            "blue",
-                        )
-                    )
+
                 elif "disallow_item" in rule:
                     # Disallow items for LLM guardrail
                     condition = f"Check if this content contains any of these disallowed categories: {', '.join(rule['disallow_item'])}"
-                    print(colored(f"🚫 Using disallow items for LLM guardrail: {rule['disallow_item']}", "blue"))
+
                 else:
                     raise ValueError(
                         f"Either custom_prompt or disallow_item must be provided for LLM guardrail: {rule['message_src']} -> {rule['message_dst']}"
@@ -428,7 +554,7 @@ class SafeguardManager:
                         target=TransitionTarget(),
                         activation_message=rule.get("activation_message", "Regex pattern matched"),
                     )
-                    print(colored(f"🔍 Using regex pattern for guardrail: {rule['pattern']}", "blue"))
+
 
             # Add rule with guardrail
             parsed_rule = {
@@ -492,15 +618,8 @@ class SafeguardManager:
                 # Add LLM-specific parameters
                 if "custom_prompt" in rule:
                     parsed_rule["custom_prompt"] = rule["custom_prompt"]
-                    print(
-                        colored(
-                            f"📝 Using custom prompt for tool interaction LLM: {rule['message_source']} -> {rule['message_destination']}",
-                            "blue",
-                        )
-                    )
                 elif "disallow_item" in rule:
                     parsed_rule["disallow"] = rule["disallow_item"]
-                    print(colored(f"🚫 Using disallow items for tool interaction LLM: {rule['disallow_item']}", "blue"))
 
                 rules.append(parsed_rule)
 
@@ -598,8 +717,8 @@ class SafeguardManager:
                 result = self._check_tool_interaction(agent_name, tool_input, "output")
                 return result if result is not None else tool_input
 
-            hooks["process_tool_input"] = tool_input_hook
-            hooks["process_tool_output"] = tool_output_hook
+            hooks["safeguard_tool_input_process"] = tool_input_hook
+            hooks["safeguard_tool_output_process"] = tool_output_hook
 
         # Check if we have any LLM interaction rules that apply to this agent
         agent_llm_rules = [
@@ -644,8 +763,8 @@ class SafeguardManager:
                     return result
                 return tool_input
 
-            hooks["process_llm_input"] = llm_input_hook
-            hooks["process_llm_output"] = llm_output_hook
+            hooks["safeguard_llm_input_process"] = llm_input_hook
+            hooks["safeguard_llm_output_process"] = llm_output_hook
 
         # Check if we have any user interaction rules that apply to this agent
         agent_user_rules = [
@@ -664,7 +783,7 @@ class SafeguardManager:
                     return {**tool_input, "content": result}
                 return tool_input if result == human_input else {"content": result}
 
-            hooks["process_human_input"] = human_input_hook
+            hooks["safeguard_human_input_process"] = human_input_hook
 
         # Check if we have any inter-agent rules that apply to this agent
         agent_inter_rules = [
@@ -755,7 +874,7 @@ class SafeguardManager:
             if re.search(pattern, content, re.IGNORECASE):
                 return True, f"Content matched pattern: {pattern}"
         except re.error as e:
-            print(colored(f"Invalid regex pattern '{pattern}': {e}", "red"))
+            raise ValueError(f"Invalid regex pattern '{pattern}': {e}")
 
         return False, "No pattern match"
 
@@ -767,22 +886,47 @@ class SafeguardManager:
         explanation: str,
         custom_message: str | None = None,
         pattern: str | None = None,
+        guardrail_type: str | None = None,
+        source_agent: str | None = None,
+        target_agent: str | None = None,
+        content_preview: str | None = None,
     ) -> str | dict[str, Any] | list[Any]:
         """Apply the specified action to content."""
         message = custom_message or explanation
 
         if action == "block":
-            print(colored(f"🚨 BLOCKED: {message}", "red"))
+            self._send_safeguard_event(
+                event_type="action",
+                message=f"BLOCKED: {message}",
+                action="block",
+                source_agent=source_agent,
+                target_agent=target_agent,
+                content_preview=content_preview
+            )
             return self._handle_blocked_content(content, message)
         elif action == "mask":
-            print(colored(f"🎭 MASKED: {message}", "yellow"))
+            self._send_safeguard_event(
+                event_type="action",
+                message=f"MASKED: {message}",
+                action="mask",
+                source_agent=source_agent,
+                target_agent=target_agent,
+                content_preview=content_preview
+            )
 
             def mask_func(text: str) -> str:
                 return self._mask_content(text, disallow_items, explanation, pattern)
 
             return self._handle_masked_content(content, mask_func)
         elif action == "warning":
-            print(colored(f"⚠️ WARNING: {message}", "yellow"))
+            self._send_safeguard_event(
+                event_type="action",
+                message=f"WARNING: {message}",
+                action="warning",
+                source_agent=source_agent,
+                target_agent=target_agent,
+                content_preview=content_preview
+            )
             return content
         else:
             return content
@@ -798,7 +942,7 @@ class SafeguardManager:
                 if masked != content:  # Only return if something was actually masked
                     return masked
             except re.error as e:
-                print(colored(f"Pattern masking failed: {e}", "red"))
+                raise ValueError(f"Pattern masking failed: {e}")
 
         # Try LLM-based masking if available
         if self.mask_agent and disallow_items:
@@ -819,7 +963,7 @@ class SafeguardManager:
                     masked = response[1].get("content", content) if isinstance(response[1], dict) else str(response[1])
                     return masked
             except Exception as e:
-                print(colored(f"LLM masking failed: {e}", "red"))
+                raise ValueError(f"LLM masking failed: {e}")
 
         return masked
 
@@ -966,20 +1110,33 @@ class SafeguardManager:
                 target_match = rule["target"] == "*" or rule["target"] == recipient_name
 
                 if source_match and target_match:
-                    # Log the detection check
-                    print(colored("\n🔍 Checking inter-agent communication:", "cyan"))
-                    print(colored(f"  • From: {sender_name}", "cyan"))
-                    print(colored(f"  • To: {recipient_name}", "cyan"))
-                    print(colored(f"  • Rule action: {rule.get('action', 'N/A')}", "cyan"))
-                    print(colored(f"  • Content: {content[:100]}{'...' if len(content) > 100 else ''}", "cyan"))
-
+                    # Prepare content preview
+                    content_preview = content[:100] + ('...' if len(content) > 100 else '')
+                    
                     # Use guardrail if available
                     if "guardrail" in rule and rule["guardrail"]:
-                        print(colored(f"  • Checking with guardrail: {type(rule['guardrail']).__name__}", "blue"))
+                        # Send single check event with guardrail info
+                        self._send_safeguard_event(
+                            event_type="check",
+                            message="Checking inter-agent communication",
+                            source_agent=sender_name,
+                            target_agent=recipient_name,
+                            guardrail_type=type(rule["guardrail"]).__name__,
+                            # action=rule.get('action', 'N/A'),
+                            content_preview=content_preview
+                        )
+
                         try:
                             result = rule["guardrail"].check(content)
                             if result.activated:
-                                print(colored(f"  • 🚨 VIOLATION DETECTED: {result.justification}", "red"))
+                                self._send_safeguard_event(
+                                    event_type="violation",
+                                    message=f"VIOLATION DETECTED: {result.justification}",
+                                    source_agent=sender_name,
+                                    target_agent=recipient_name,
+                                    guardrail_type=type(rule['guardrail']).__name__,
+                                    content_preview=content_preview
+                                )
                                 # Pass the pattern if it's a regex guardrail
                                 pattern = rule.get("pattern") if isinstance(rule["guardrail"], RegexGuardrail) else None
                                 action_result = self._apply_action(
@@ -989,22 +1146,35 @@ class SafeguardManager:
                                     result.justification,
                                     rule.get("activation_message", result.justification),
                                     pattern,
+                                    type(rule["guardrail"]).__name__,
+                                    sender_name,
+                                    recipient_name,
+                                    content_preview
                                 )
                                 if isinstance(action_result, (str, dict)):
                                     return action_result
                                 else:
                                     return message
                             else:
-                                print(colored("  • ✅ Content passed guardrail check", "green"))
+                                # Content passed - no additional event needed, already sent check event above
+                                pass
                         except Exception as e:
-                            print(colored(f"  • ❌ Guardrail check failed: {e}", "red"))
+                            raise ValueError(f"Guardrail check failed: {e}")
 
                     # Handle legacy pattern-based rules
                     elif "pattern" in rule and rule["pattern"]:
-                        print(colored(f"  • Checking with pattern: {rule['pattern']}", "blue"))
+                        # Send single check event for pattern-based rules
+                        self._send_safeguard_event(
+                            event_type="check",
+                            message="Checking inter-agent communication",
+                            source_agent=sender_name,
+                            target_agent=recipient_name,
+                            guardrail_type="RegexGuardrail",
+                            # action=rule.get('action', 'N/A'),
+                            content_preview=content_preview
+                        )
                         is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                         if is_violation:
-                            print(colored(f"  • 🚨 PATTERN VIOLATION: {explanation}", "red"))
                             result_value = self._apply_action(
                                 rule["action"],
                                 message,
@@ -1012,39 +1182,59 @@ class SafeguardManager:
                                 explanation,
                                 rule.get("activation_message"),
                                 rule["pattern"],
+                                "RegexGuardrail",
+                                sender_name,
+                                recipient_name,
+                                content_preview
                             )
                             if isinstance(result_value, (str, dict)):
                                 return result_value
                             else:
                                 return message
                         else:
-                            print(colored("  • ✅ Content passed pattern check", "green"))
+                            pass
 
-                    # Handle legacy disallow-based rules and custom prompts
+                    # Handle legacy disallow-based rules and custom prompts  
                     elif "disallow" in rule or "custom_prompt" in rule:
+                        # Send single check event for LLM-based legacy rules
+                        self._send_safeguard_event(
+                            event_type="check",
+                            message="Checking inter-agent communication",
+                            source_agent=sender_name,
+                            target_agent=recipient_name,
+                            guardrail_type="LLMGuardrail",
+                            # action=rule.get('action', 'N/A'),
+                            content_preview=content_preview
+                        )
                         if "custom_prompt" in rule:
-                            print(colored("  • Checking with custom prompt", "blue"))
                             is_violation, explanation = self._check_safeguard_condition(
                                 content, custom_prompt=rule["custom_prompt"]
                             )
                         else:
-                            print(colored(f"  • Checking with disallow items: {rule['disallow']}", "blue"))
                             is_violation, explanation = self._check_safeguard_condition(
                                 content, disallow_items=rule["disallow"]
                             )
 
                         if is_violation:
                             violation_type = "CUSTOM PROMPT" if "custom_prompt" in rule else "DISALLOW"
-                            print(colored(f"  • 🚨 {violation_type} VIOLATION: {explanation}", "red"))
                             result_value = self._apply_action(
-                                rule["action"], message, rule.get("disallow", []), explanation
+                                rule["action"], 
+                                message, 
+                                rule.get("disallow", []), 
+                                explanation,
+                                None,  # custom_message
+                                None,  # pattern
+                                "LLMGuardrail",
+                                sender_name,
+                                recipient_name,
+                                content_preview
                             )
                             if isinstance(result_value, (str, dict)):
                                 return result_value
                             else:
                                 return message
                         else:
-                            print(colored("  • ✅ Content passed check", "green"))
+                            pass
 
         return message
 
@@ -1071,13 +1261,17 @@ class SafeguardManager:
                             str(data.get("content", "")) if direction == "output" else str(data.get("arguments", ""))
                         )
 
-                        # Log the detection check
-                        print(colored("\n🔍 Checking tool interaction:", "cyan"))
-                        print(colored(f"  • Agent: {agent_name}", "cyan"))
-                        print(colored(f"  • Tool: {tool_name}", "cyan"))
-                        print(colored(f"  • Direction: {direction}", "cyan"))
-                        print(colored(f"  • Rule action: {rule.get('action', 'N/A')}", "cyan"))
-                        print(colored(f"  • Content: {content[:100]}{'...' if len(content) > 100 else ''}", "cyan"))
+                        # Send check event for tool interaction
+                        content_preview = content[:100] + ('...' if len(content) > 100 else '')
+                        self._send_safeguard_event(
+                            event_type="check",
+                            message=f"Checking tool interaction: {agent_name} <-> {tool_name} ({direction})",
+                            source_agent=agent_name,
+                            target_agent=tool_name,
+                            guardrail_type="LLMGuardrail" if rule.get("check_method") == "llm" else "RegexGuardrail",
+                            # action=rule.get('action', 'N/A'),
+                            content_preview=content_preview
+                        )
 
                         # Check method-specific handling
                         check_method = rule.get("check_method", "regex")
@@ -1090,12 +1284,10 @@ class SafeguardManager:
                                 )
 
                             if "custom_prompt" in rule:
-                                print(colored("  • Checking with custom LLM prompt", "blue"))
                                 is_violation, explanation = self._check_safeguard_condition(
                                     content, custom_prompt=rule["custom_prompt"]
                                 )
                             elif "disallow" in rule:
-                                print(colored(f"  • Checking with LLM disallow items: {rule['disallow']}", "blue"))
                                 is_violation, explanation = self._check_safeguard_condition(
                                     content, disallow_items=rule["disallow"]
                                 )
@@ -1106,23 +1298,29 @@ class SafeguardManager:
 
                             if is_violation:
                                 violation_type = "CUSTOM LLM" if "custom_prompt" in rule else "LLM DISALLOW"
-                                print(colored(f"  • 🚨 {violation_type} VIOLATION: {explanation}", "red"))
                                 result_value = self._apply_action(
-                                    rule["action"], data, [], explanation, rule.get("message")
+                                    rule["action"], 
+                                    data, 
+                                    [], 
+                                    explanation, 
+                                    rule.get("message"),
+                                    None,  # pattern
+                                    "LLMGuardrail",
+                                    agent_name,
+                                    tool_name,
+                                    content_preview
                                 )
                                 if isinstance(result_value, dict):
                                     return result_value
                                 else:
                                     return data
                             else:
-                                print(colored("  • ✅ Content passed LLM check", "green"))
+                                pass
 
                         elif "pattern" in rule:
                             # Regex pattern-based checking
-                            print(colored(f"  • Checking with regex pattern: {rule['pattern']}", "blue"))
                             is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                             if is_violation:
-                                print(colored(f"  • 🚨 REGEX VIOLATION: {explanation}", "red"))
                                 result_value = self._apply_action(
                                     rule["action"], data, [], explanation, rule.get("message")
                                 )
@@ -1138,29 +1336,50 @@ class SafeguardManager:
                                 else:
                                     return data
                             else:
-                                print(colored("  • ✅ Content passed regex check", "green"))
+                                pass
 
                 # Handle simple pattern-based format
                 elif "pattern" in rule and "message_source" not in rule:
                     content = str(data.get("content", "")) if direction == "output" else str(data.get("arguments", ""))
+                    content_preview = content[:100] + "..." if len(content) > 100 else content
 
-                    print(colored("\n🔍 Checking tool interaction (simple regex pattern):", "cyan"))
-                    print(colored(f"  • Agent: {agent_name}", "cyan"))
-                    print(colored(f"  • Direction: {direction}", "cyan"))
-                    print(colored(f"  • Content: {content[:100]}{'...' if len(content) > 100 else ''}", "cyan"))
-                    print(colored(f"  • Checking with regex pattern: {rule['pattern']}", "blue"))
-
+                    self._send_safeguard_event(
+                        event_type="check",
+                        message=f"Checking tool interaction: {agent_name} <-> tool ({direction})",
+                        source_agent=agent_name,
+                        target_agent="tool",
+                        guardrail_type="RegexGuardrail",
+                        # action=rule.get('action', 'N/A'),
+                        content_preview=content_preview
+                    )
+                    
                     is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                     if is_violation:
-                        print(colored(f"  • 🚨 REGEX VIOLATION: {explanation}", "red"))
-                        result_value = self._apply_action(rule["action"], data, [], explanation, rule.get("message"))
+                        self._send_safeguard_event(
+                            event_type="violation",
+                            message=f"REGEX VIOLATION: {explanation}",
+                            source_agent=agent_name,
+                            target_agent="tool",
+                            guardrail_type="RegexGuardrail",
+                            content_preview=content_preview
+                        )
+                        result_value = self._apply_action(
+                            rule["action"], 
+                            data, 
+                            [], 
+                            explanation, 
+                            rule.get("message"),
+                            rule.get("pattern"),
+                            "RegexGuardrail",
+                            agent_name,
+                            "tool",
+                            content_preview
+                        )
                         # For tool output blocking, preserve tool message structure
                         if isinstance(result_value, dict):
                             return result_value
                         else:
                             return data
-                    else:
-                        print(colored("  • ✅ Content passed regex check", "green"))
 
         return data
 
@@ -1187,17 +1406,81 @@ class SafeguardManager:
 
                     if rule_applies:
                         content = str(data)
+                        content_preview = content[:100] + "..." if len(content) > 100 else content
+                        target_name = "llm" if direction == "input" else agent_name
+                        source_name = agent_name if direction == "input" else "llm"
+
+                        self._send_safeguard_event(
+                            event_type="check",
+                            message=f"Checking LLM interaction: {source_name} <-> {target_name} ({direction})",
+                            source_agent=source_name,
+                            target_agent=target_name,
+                            guardrail_type="RegexGuardrail",
+                            # action=rule.get('action', 'N/A'),
+                            content_preview=content_preview
+                        )
+                        
                         is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                         if is_violation:
-                            result = self._apply_action(rule["action"], data, [], explanation, rule.get("message"))
+                            self._send_safeguard_event(
+                                event_type="violation",
+                                message=f"REGEX VIOLATION: {explanation}",
+                                source_agent=source_name,
+                                target_agent=target_name,
+                                guardrail_type="RegexGuardrail",
+                                content_preview=content_preview
+                            )
+                            result = self._apply_action(
+                                rule["action"], 
+                                data, 
+                                [], 
+                                explanation, 
+                                rule.get("message"),
+                                rule.get("pattern"),
+                                "RegexGuardrail",
+                                source_name,
+                                target_name,
+                                content_preview
+                            )
                             return result
 
                 # Handle simple pattern-based format
                 elif "pattern" in rule and "message_source" not in rule:
                     content = str(data)
+                    content_preview = content[:100] + "..." if len(content) > 100 else content
+
+                    self._send_safeguard_event(
+                        event_type="check",
+                        message=f"Checking LLM interaction: {agent_name} <-> llm ({direction})",
+                        source_agent=agent_name,
+                        target_agent="llm",
+                        guardrail_type="RegexGuardrail",
+                        # action=rule.get('action', 'N/A'),
+                        content_preview=content_preview
+                    )
+                    
                     is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                     if is_violation:
-                        result_value = self._apply_action(rule["action"], data, [], explanation, rule.get("message"))
+                        self._send_safeguard_event(
+                            event_type="violation",
+                            message=f"REGEX VIOLATION: {explanation}",
+                            source_agent=agent_name,
+                            target_agent="llm",
+                            guardrail_type="RegexGuardrail",
+                            content_preview=content_preview
+                        )
+                        result_value = self._apply_action(
+                            rule["action"], 
+                            data, 
+                            [], 
+                            explanation, 
+                            rule.get("message"),
+                            rule.get("pattern"),
+                            "RegexGuardrail",
+                            agent_name,
+                            "llm",
+                            content_preview
+                        )
                         return result_value
 
         return data
@@ -1220,11 +1503,42 @@ class SafeguardManager:
                             f"safeguard_llm_config is required for user interaction rule for agent: {agent_name}"
                         )
 
+                    content_preview = user_input[:100] + "..." if len(user_input) > 100 else user_input
+                    
+                    self._send_safeguard_event(
+                        event_type="check",
+                        message=f"Checking user interaction: user <-> {agent_name}",
+                        source_agent="user",
+                        target_agent=agent_name,
+                        guardrail_type="LLMGuardrail",
+                        # action=rule.get('action', 'N/A'),
+                        content_preview=content_preview
+                    )
+
                     is_violation, explanation = self._check_safeguard_condition(
                         user_input, disallow_items=rule["disallow"]
                     )
                     if is_violation:
-                        result_value = self._apply_action(rule["action"], user_input, rule["disallow"], explanation)
+                        self._send_safeguard_event(
+                            event_type="violation",
+                            message=f"LLM VIOLATION: {explanation}",
+                            source_agent="user",
+                            target_agent=agent_name,
+                            guardrail_type="LLMGuardrail",
+                            content_preview=content_preview
+                        )
+                        result_value = self._apply_action(
+                            rule["action"], 
+                            user_input, 
+                            rule["disallow"], 
+                            explanation,
+                            None,  # custom_message
+                            None,  # pattern
+                            "LLMGuardrail",
+                            "user",
+                            agent_name,
+                            content_preview
+                        )
                         return result_value if isinstance(result_value, str) else user_input
 
         return user_input
@@ -1330,7 +1644,6 @@ def apply_safeguards(
             groupchat_manager.groupchat._inter_agent_guardrails = []
         groupchat_manager.groupchat._inter_agent_guardrails.clear()  # Clear any existing
         groupchat_manager.groupchat._inter_agent_guardrails.append(manager)
-        print(colored("✅ Registered inter-agent safeguards with GroupChat", "green"))
     elif agents:
         target_agents.extend(agents)
         all_agent_names = [agent.name for agent in agents]
@@ -1369,13 +1682,9 @@ def apply_safeguards(
             for hook_name, hook_func in hooks.items():
                 if hook_name in agent.hook_lists:
                     agent.hook_lists[hook_name].append(hook_func)
-                    print(colored(f"✅ Registered {hook_name} hook for agent {agent.name}", "green"))
         else:
-            print(
-                colored(
-                    f"⚠️ Agent {agent.name} does not support hooks. Please ensure it inherits from ConversableAgent.",
-                    "yellow",
-                )
+            raise ValueError(
+                f"Agent {agent.name} does not support hooks. Please ensure it inherits from ConversableAgent."
             )
 
     return manager
