@@ -14,11 +14,11 @@ from termcolor import colored
 
 from ...events.base_event import BaseEvent, wrap_event
 from ...io.base import IOStream
+from ...llm_config import LLMConfig
 from .guardrails import LLMGuardrail, RegexGuardrail
 from .targets.transition_target import TransitionTarget
 
 if TYPE_CHECKING:
-    from ...llm_config import LLMConfig
     from ..agent import Agent
     from ..conversable_agent import ConversableAgent
     from ..groupchat import GroupChatManager
@@ -136,22 +136,19 @@ class SafeguardManager:
     def __init__(
         self,
         manifest: dict[str, Any] | str,
-        llm_config: LLMConfig | None = None,
-        safeguard_llm_config: LLMConfig | None = None,
-        mask_llm_config: LLMConfig | None = None,
+        safeguard_llm_config: LLMConfig | dict[str, Any] | None = None,
+        mask_llm_config: LLMConfig | dict[str, Any] | None = None,
     ):
         """Initialize the safeguard manager.
 
         Args:
             manifest: Safeguard manifest dict or path to JSON file
-            llm_config: Default LLM configuration
             safeguard_llm_config: LLM configuration for safeguard checks
             mask_llm_config: LLM configuration for masking
         """
         self.manifest = self._load_manifest(manifest)
-        self.llm_config = llm_config
-        self.safeguard_llm_config = safeguard_llm_config or llm_config
-        self.mask_llm_config = mask_llm_config or llm_config
+        self.safeguard_llm_config = safeguard_llm_config
+        self.mask_llm_config = mask_llm_config
 
         # Validate manifest format before proceeding
         self._validate_manifest()
@@ -513,29 +510,10 @@ class SafeguardManager:
                         f"Either custom_prompt or disallow_item must be provided for LLM guardrail: {rule['message_src']} -> {rule['message_dst']}"
                     )
 
-                # Create LLM guardrail - handle dict config
+                # Create LLM guardrail - handle dict config by converting to LLMConfig
                 llm_config = self.safeguard_llm_config
                 if isinstance(llm_config, dict):
-
-                    class SimpleLLMConfig:
-                        def __init__(self, config_dict):
-                            self._config = config_dict
-
-                        def deepcopy(self):
-                            import copy
-
-                            return SimpleLLMConfig(copy.deepcopy(self._config))
-
-                        def model_dump(self):
-                            return self._config
-
-                        def __setattr__(self, name, value):
-                            if name.startswith("_"):
-                                super().__setattr__(name, value)
-                            else:
-                                self._config[name] = value
-
-                    llm_config = SimpleLLMConfig(llm_config)
+                    llm_config = LLMConfig(config_list=[llm_config])
 
                 guardrail = LLMGuardrail(
                     name=f"llm_guard_{rule['message_src']}_{rule['message_dst']}",
@@ -717,8 +695,8 @@ class SafeguardManager:
                 result = self._check_tool_interaction(agent_name, tool_input, "output")
                 return result if result is not None else tool_input
 
-            hooks["safeguard_tool_input_process"] = tool_input_hook
-            hooks["safeguard_tool_output_process"] = tool_output_hook
+            hooks["safeguard_tool_inputs"] = tool_input_hook
+            hooks["safeguard_tool_outputs"] = tool_output_hook
 
         # Check if we have any LLM interaction rules that apply to this agent
         agent_llm_rules = [
@@ -763,8 +741,8 @@ class SafeguardManager:
                     return result
                 return tool_input
 
-            hooks["safeguard_llm_input_process"] = llm_input_hook
-            hooks["safeguard_llm_output_process"] = llm_output_hook
+            hooks["safeguard_llm_inputs"] = llm_input_hook
+            hooks["safeguard_llm_outputs"] = llm_output_hook
 
         # Check if we have any user interaction rules that apply to this agent
         agent_user_rules = [
@@ -783,7 +761,7 @@ class SafeguardManager:
                     return {**tool_input, "content": result}
                 return tool_input if result == human_input else {"content": result}
 
-            hooks["safeguard_human_input_process"] = human_input_hook
+            hooks["safeguard_human_inputs"] = human_input_hook
 
         # Check if we have any inter-agent rules that apply to this agent
         agent_inter_rules = [
@@ -828,29 +806,10 @@ class SafeguardManager:
             raise ValueError("Either custom_prompt or disallow_items must be provided")
 
         # Create LLM guardrail for checking
-        # Handle dict config by wrapping it
+        # Handle dict config by converting to LLMConfig
         llm_config = self.safeguard_llm_config
         if isinstance(llm_config, dict):
-
-            class SimpleLLMConfig:
-                def __init__(self, config_dict):
-                    self._config = config_dict
-
-                def deepcopy(self):
-                    import copy
-
-                    return SimpleLLMConfig(copy.deepcopy(self._config))
-
-                def model_dump(self):
-                    return self._config
-
-                def __setattr__(self, name, value):
-                    if name.startswith("_"):
-                        super().__setattr__(name, value)
-                    else:
-                        self._config[name] = value
-
-            llm_config = SimpleLLMConfig(llm_config)
+            llm_config = LLMConfig(config_list=[llm_config])
 
         from .targets.transition_target import TransitionTarget
 
@@ -1140,16 +1099,16 @@ class SafeguardManager:
                                 # Pass the pattern if it's a regex guardrail
                                 pattern = rule.get("pattern") if isinstance(rule["guardrail"], RegexGuardrail) else None
                                 action_result = self._apply_action(
-                                    rule["action"],
-                                    message,
-                                    [],
-                                    result.justification,
-                                    rule.get("activation_message", result.justification),
-                                    pattern,
-                                    type(rule["guardrail"]).__name__,
-                                    sender_name,
-                                    recipient_name,
-                                    content_preview
+                                    action=rule["action"],
+                                    content=message,
+                                    disallow_items=[],
+                                    explanation=result.justification,
+                                    custom_message=rule.get("activation_message", result.justification),
+                                    pattern=pattern,
+                                    guardrail_type=type(rule["guardrail"]).__name__,
+                                    source_agent=sender_name,
+                                    target_agent=recipient_name,
+                                    content_preview=content_preview
                                 )
                                 if isinstance(action_result, (str, dict)):
                                     return action_result
@@ -1176,16 +1135,16 @@ class SafeguardManager:
                         is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                         if is_violation:
                             result_value = self._apply_action(
-                                rule["action"],
-                                message,
-                                [],
-                                explanation,
-                                rule.get("activation_message"),
-                                rule["pattern"],
-                                "RegexGuardrail",
-                                sender_name,
-                                recipient_name,
-                                content_preview
+                                action=rule["action"],
+                                content=message,
+                                disallow_items=[],
+                                explanation=explanation,
+                                custom_message=rule.get("activation_message"),
+                                pattern=rule["pattern"],
+                                guardrail_type="RegexGuardrail",
+                                source_agent=sender_name,
+                                target_agent=recipient_name,
+                                content_preview=content_preview
                             )
                             if isinstance(result_value, (str, dict)):
                                 return result_value
@@ -1218,16 +1177,16 @@ class SafeguardManager:
                         if is_violation:
                             violation_type = "CUSTOM PROMPT" if "custom_prompt" in rule else "DISALLOW"
                             result_value = self._apply_action(
-                                rule["action"], 
-                                message, 
-                                rule.get("disallow", []), 
-                                explanation,
-                                None,  # custom_message
-                                None,  # pattern
-                                "LLMGuardrail",
-                                sender_name,
-                                recipient_name,
-                                content_preview
+                                action=rule["action"], 
+                                content=message, 
+                                disallow_items=rule.get("disallow", []), 
+                                explanation=explanation,
+                                custom_message=None,
+                                pattern=None,
+                                guardrail_type="LLMGuardrail",
+                                source_agent=sender_name,
+                                target_agent=recipient_name,
+                                content_preview=content_preview
                             )
                             if isinstance(result_value, (str, dict)):
                                 return result_value
@@ -1299,16 +1258,16 @@ class SafeguardManager:
                             if is_violation:
                                 violation_type = "CUSTOM LLM" if "custom_prompt" in rule else "LLM DISALLOW"
                                 result_value = self._apply_action(
-                                    rule["action"], 
-                                    data, 
-                                    [], 
-                                    explanation, 
-                                    rule.get("message"),
-                                    None,  # pattern
-                                    "LLMGuardrail",
-                                    agent_name,
-                                    tool_name,
-                                    content_preview
+                                    action=rule["action"], 
+                                    content=data, 
+                                    disallow_items=[], 
+                                    explanation=explanation, 
+                                    custom_message=rule.get("message"),
+                                    pattern=None,
+                                    guardrail_type="LLMGuardrail",
+                                    source_agent=agent_name,
+                                    target_agent=tool_name,
+                                    content_preview=content_preview
                                 )
                                 if isinstance(result_value, dict):
                                     return result_value
@@ -1322,7 +1281,11 @@ class SafeguardManager:
                             is_violation, explanation = self._check_pattern_condition(content, rule["pattern"])
                             if is_violation:
                                 result_value = self._apply_action(
-                                    rule["action"], data, [], explanation, rule.get("message")
+                                    action=rule["action"], 
+                                    content=data, 
+                                    disallow_items=[], 
+                                    explanation=explanation, 
+                                    custom_message=rule.get("message")
                                 )
                                 # For tool output blocking, preserve tool message structure
                                 if (
@@ -1364,16 +1327,16 @@ class SafeguardManager:
                             content_preview=content_preview
                         )
                         result_value = self._apply_action(
-                            rule["action"], 
-                            data, 
-                            [], 
-                            explanation, 
-                            rule.get("message"),
-                            rule.get("pattern"),
-                            "RegexGuardrail",
-                            agent_name,
-                            "tool",
-                            content_preview
+                            action=rule["action"], 
+                            content=data, 
+                            disallow_items=[], 
+                            explanation=explanation, 
+                            custom_message=rule.get("message"),
+                            pattern=rule.get("pattern"),
+                            guardrail_type="RegexGuardrail",
+                            source_agent=agent_name,
+                            target_agent="tool",
+                            content_preview=content_preview
                         )
                         # For tool output blocking, preserve tool message structure
                         if isinstance(result_value, dict):
@@ -1431,16 +1394,16 @@ class SafeguardManager:
                                 content_preview=content_preview
                             )
                             result = self._apply_action(
-                                rule["action"], 
-                                data, 
-                                [], 
-                                explanation, 
-                                rule.get("message"),
-                                rule.get("pattern"),
-                                "RegexGuardrail",
-                                source_name,
-                                target_name,
-                                content_preview
+                                action=rule["action"], 
+                                content=data, 
+                                disallow_items=[], 
+                                explanation=explanation, 
+                                custom_message=rule.get("message"),
+                                pattern=rule.get("pattern"),
+                                guardrail_type="RegexGuardrail",
+                                source_agent=source_name,
+                                target_agent=target_name,
+                                content_preview=content_preview
                             )
                             return result
 
@@ -1470,16 +1433,16 @@ class SafeguardManager:
                             content_preview=content_preview
                         )
                         result_value = self._apply_action(
-                            rule["action"], 
-                            data, 
-                            [], 
-                            explanation, 
-                            rule.get("message"),
-                            rule.get("pattern"),
-                            "RegexGuardrail",
-                            agent_name,
-                            "llm",
-                            content_preview
+                            action=rule["action"], 
+                            content=data, 
+                            disallow_items=[], 
+                            explanation=explanation, 
+                            custom_message=rule.get("message"),
+                            pattern=rule.get("pattern"),
+                            guardrail_type="RegexGuardrail",
+                            source_agent=agent_name,
+                            target_agent="llm",
+                            content_preview=content_preview
                         )
                         return result_value
 
@@ -1528,16 +1491,16 @@ class SafeguardManager:
                             content_preview=content_preview
                         )
                         result_value = self._apply_action(
-                            rule["action"], 
-                            user_input, 
-                            rule["disallow"], 
-                            explanation,
-                            None,  # custom_message
-                            None,  # pattern
-                            "LLMGuardrail",
-                            "user",
-                            agent_name,
-                            content_preview
+                            action=rule["action"], 
+                            content=user_input, 
+                            disallow_items=rule["disallow"], 
+                            explanation=explanation,
+                            custom_message=None,
+                            pattern=None,
+                            guardrail_type="LLMGuardrail",
+                            source_agent="user",
+                            target_agent=agent_name,
+                            content_preview=content_preview
                         )
                         return result_value if isinstance(result_value, str) else user_input
 
