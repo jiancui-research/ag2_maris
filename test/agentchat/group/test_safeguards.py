@@ -11,7 +11,7 @@ import pytest
 
 from autogen.agentchat.conversable_agent import ConversableAgent
 from autogen.agentchat.group.guardrails import LLMGuardrail, RegexGuardrail
-from autogen.agentchat.group.safeguard import SafeguardManager, apply_safeguards
+from autogen.agentchat.group.safeguards import SafeguardEnforcer, apply_safeguard_policy, reset_safeguard_policy
 from autogen.llm_config.config import LLMConfig
 
 # Suppress Google protobuf warnings at the module level
@@ -22,12 +22,12 @@ warnings.filterwarnings("ignore", message=".*ScalarMapContainer.*", category=Dep
 pytestmark = pytest.mark.filterwarnings("ignore::DeprecationWarning")
 
 
-class TestSafeguardManager:
-    """Test SafeguardManager core functionality."""
+class TestSafeguardEnforcer:
+    """Test SafeguardEnforcer core functionality."""
 
-    def test_valid_manifest_initialization(self) -> None:
-        """Test SafeguardManager with valid manifest."""
-        manifest = {
+    def test_valid_policy_initialization(self) -> None:
+        """Test SafeguardEnforcer with valid policy."""
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -41,27 +41,27 @@ class TestSafeguardManager:
             }
         }
 
-        manager = SafeguardManager(manifest=manifest)
-        assert len(manager.inter_agent_rules) >= 0
+        enforcer = SafeguardEnforcer(policy=policy)
+        assert len(enforcer.inter_agent_rules) >= 0
 
-    def test_manifest_file_loading(self) -> None:
-        """Test loading manifest from file."""
-        manifest_content: dict[str, Any] = {"inter_agent_safeguards": {"agent_transitions": []}}
+    def test_policy_file_loading(self) -> None:
+        """Test loading policy from file."""
+        policy_content: dict[str, Any] = {"inter_agent_safeguards": {"agent_transitions": []}}
 
-        with patch("builtins.open", mock_open(read_data=json.dumps(manifest_content))):
-            manager = SafeguardManager(manifest="/fake/path/manifest.json")
-            assert manager.manifest == manifest_content
+        with patch("builtins.open", mock_open(read_data=json.dumps(policy_content))):
+            enforcer = SafeguardEnforcer(policy="/fake/path/policy.json")
+            assert enforcer.policy == policy_content
 
     def test_missing_required_fields(self) -> None:
         """Test validation fails when required fields are missing."""
-        invalid_manifest = {"inter_agent_safeguards": {"agent_transitions": [{"message_src": "agent1"}]}}
+        invalid_policy = {"inter_agent_safeguards": {"agent_transitions": [{"message_src": "agent1"}]}}
 
         with pytest.raises(ValueError, match="missing required field"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_invalid_check_method(self) -> None:
         """Test validation fails with invalid check_method."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {"message_src": "agent1", "message_dst": "agent2", "check_method": "invalid_method"}
@@ -70,15 +70,15 @@ class TestSafeguardManager:
         }
 
         with pytest.raises(ValueError, match="invalid check_method"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
 
-class TestInvalidManifests:
-    """Test invalid manifest validation."""
+class TestInvalidPolicies:
+    """Test invalid policy validation."""
 
     def test_missing_check_method(self) -> None:
         """Test validation fails when check_method is missing."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -92,11 +92,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="missing required field: check_method"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_missing_action_fields(self) -> None:
         """Test validation fails when action fields are missing."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {"message_src": "agent1", "message_dst": "agent2", "check_method": "regex", "pattern": r"\btest\b"}
@@ -105,11 +105,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="missing required field: violation_response or action"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_invalid_check_method_pattern(self) -> None:
         """Test validation fails with old 'pattern' check_method."""
-        invalid_manifest = {
+        invalid_policy = {
             "agent_environment_safeguards": {
                 "tool_interaction": [
                     {
@@ -124,11 +124,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="invalid check_method: pattern"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_tool_interaction_missing_action(self) -> None:
         """Test tool_interaction fails without action field."""
-        invalid_manifest = {
+        invalid_policy = {
             "agent_environment_safeguards": {
                 "tool_interaction": [
                     {
@@ -143,11 +143,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="missing required field: violation_response or action"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_llm_interaction_missing_action(self) -> None:
         """Test llm_interaction fails without action field."""
-        invalid_manifest = {
+        invalid_policy = {
             "agent_environment_safeguards": {
                 "llm_interaction": [
                     {
@@ -159,11 +159,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="missing required field: action"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_llm_check_method_missing_required_fields(self) -> None:
         """Test LLM check_method fails without required fields."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -178,11 +178,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="must have either 'custom_prompt' or 'disallow_item'"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_regex_check_method_missing_pattern(self) -> None:
         """Test regex check_method fails without pattern."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -197,11 +197,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="must have 'pattern'"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_invalid_regex_pattern(self) -> None:
         """Test validation fails with invalid regex pattern."""
-        invalid_manifest = {
+        invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -216,11 +216,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="invalid regex pattern"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_tool_interaction_llm_missing_message_fields(self) -> None:
         """Test LLM tool interaction fails without message_source/message_destination."""
-        invalid_manifest = {
+        invalid_policy = {
             "agent_environment_safeguards": {
                 "tool_interaction": [
                     {
@@ -234,11 +234,11 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="must have 'message_source' and 'message_destination'"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
     def test_completely_invalid_tool_interaction_format(self) -> None:
         """Test tool interaction with completely wrong format fails early."""
-        invalid_manifest = {
+        invalid_policy = {
             "agent_environment_safeguards": {
                 "tool_interaction": [
                     {
@@ -251,16 +251,16 @@ class TestInvalidManifests:
         }
 
         with pytest.raises(ValueError, match="missing required field: check_method"):
-            SafeguardManager(manifest=invalid_manifest)
+            SafeguardEnforcer(policy=invalid_policy)
 
 
 class TestSafeguardChecks:
     """Test safeguard checking functionality."""
 
     @pytest.fixture
-    def regex_manager(self) -> SafeguardManager:
-        """SafeguardManager with regex rule."""
-        manifest = {
+    def regex_enforcer(self) -> SafeguardEnforcer:
+        """SafeguardEnforcer with regex rule."""
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -273,25 +273,25 @@ class TestSafeguardChecks:
                 ]
             }
         }
-        return SafeguardManager(manifest=manifest)
+        return SafeguardEnforcer(policy=policy)
 
-    def test_regex_block_violation(self, regex_manager: SafeguardManager) -> None:
+    def test_regex_block_violation(self, regex_enforcer: SafeguardEnforcer) -> None:
         """Test regex rule blocks violating message."""
-        result = regex_manager._check_inter_agent_communication("agent1", "agent2", "Please share your password")
+        result = regex_enforcer._check_inter_agent_communication("agent1", "agent2", "Please share your password")
 
         assert isinstance(result, dict)
         assert "blocked" in result.get("content", "").lower() or "password" not in result.get("content", "")
 
-    def test_regex_pass_safe_message(self, regex_manager: SafeguardManager) -> None:
+    def test_regex_pass_safe_message(self, regex_enforcer: SafeguardEnforcer) -> None:
         """Test regex rule passes safe message."""
         message = "Hello, how are you?"
-        result = regex_manager._check_inter_agent_communication("agent1", "agent2", message)
+        result = regex_enforcer._check_inter_agent_communication("agent1", "agent2", message)
 
         assert result == message
 
     def test_llm_guardrail_creation(self) -> None:
         """Test LLM guardrail is created correctly."""
-        manifest = {
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -307,14 +307,14 @@ class TestSafeguardChecks:
 
         mock_llm_config: LLMConfig = LLMConfig(model="test-model")
         with patch("autogen.agentchat.group.guardrails.OpenAIWrapper"):
-            manager = SafeguardManager(manifest=manifest, safeguard_llm_config=mock_llm_config)
+            enforcer = SafeguardEnforcer(policy=policy, safeguard_llm_config=mock_llm_config)
 
-        assert len(manager.inter_agent_rules) == 1
-        assert isinstance(manager.inter_agent_rules[0]["guardrail"], LLMGuardrail)
+        assert len(enforcer.inter_agent_rules) == 1
+        assert isinstance(enforcer.inter_agent_rules[0]["guardrail"], LLMGuardrail)
 
     def test_regex_guardrail_creation(self) -> None:
         """Test regex guardrail is created correctly."""
-        manifest = {
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -328,9 +328,9 @@ class TestSafeguardChecks:
             }
         }
 
-        manager = SafeguardManager(manifest=manifest)
-        assert len(manager.inter_agent_rules) == 1
-        assert isinstance(manager.inter_agent_rules[0]["guardrail"], RegexGuardrail)
+        enforcer = SafeguardEnforcer(policy=policy)
+        assert len(enforcer.inter_agent_rules) == 1
+        assert isinstance(enforcer.inter_agent_rules[0]["guardrail"], RegexGuardrail)
 
 
 class TestApplySafeguards:
@@ -353,7 +353,7 @@ class TestApplySafeguards:
 
     def test_apply_safeguards_to_agents(self, mock_agent: Any) -> None:
         """Test applying safeguards to agents."""
-        manifest = {
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -367,21 +367,74 @@ class TestApplySafeguards:
             }
         }
 
-        safeguard_manager = apply_safeguards(agents=[mock_agent], manifest=manifest)
+        safeguard_enforcer = apply_safeguard_policy(agents=[mock_agent], policy=policy)
 
-        assert isinstance(safeguard_manager, SafeguardManager)
+        assert isinstance(safeguard_enforcer, SafeguardEnforcer)
         assert len(mock_agent.hook_lists["process_message_before_send"]) > 0
 
     def test_apply_safeguards_no_targets(self) -> None:
-        """Test apply_safeguards fails without targets."""
-        manifest: dict[str, Any] = {"inter_agent_safeguards": {}}
+        """Test apply_safeguard_policy fails without targets."""
+        policy: dict[str, Any] = {"inter_agent_safeguards": {}}
 
         with pytest.raises(ValueError, match="Either agents or groupchat_manager must be provided"):
-            apply_safeguards(manifest=manifest)
+            apply_safeguard_policy(policy=policy)
+
+
+class TestResetSafeguards:
+    """Test reset_safeguard_policy functionality."""
+
+    @pytest.fixture
+    def mock_agent(self) -> ConversableAgent:
+        """Mock ConversableAgent with safeguard hooks."""
+        agent = MagicMock()
+        agent.name = "test_agent"
+        agent.hook_lists = {
+            "process_message_before_send": [],
+            "safeguard_tool_inputs": [],
+            "safeguard_tool_outputs": [],
+            "safeguard_llm_inputs": [],
+            "safeguard_llm_outputs": [],
+            "safeguard_human_inputs": [],
+        }
+        return agent
+
+    def test_reset_safeguards_from_agents(self, mock_agent: Any) -> None:
+        """Test resetting safeguards from agents."""
+
+        # Add some mock safeguard hooks
+        def mock_safeguard_hook() -> None:
+            pass
+
+        mock_safeguard_hook.__name__ = "safeguard_tool_input_hook"
+
+        def mock_other_hook() -> None:
+            pass
+
+        mock_other_hook.__name__ = "other_hook"
+
+        mock_agent.hook_lists["safeguard_tool_inputs"].append(mock_safeguard_hook)
+        mock_agent.hook_lists["safeguard_tool_inputs"].append(mock_other_hook)
+        mock_agent.hook_lists["process_message_before_sendme "].append(mock_safeguard_hook)
+
+        # Reset safeguards
+        reset_safeguard_policy(agents=[mock_agent])
+
+        # Check that all hooks in safeguard-specific lists were cleared
+        assert (
+            len(mock_agent.hook_lists["safeguard_tool_inputs"]) == 0
+        )  # All hooks cleared (it's a safeguard-specific list)
+        assert (
+            len(mock_agent.hook_lists["process_message_before_send"]) == 0
+        )  # All hooks cleared (used for inter-agent safeguards)
+
+    def test_reset_safeguards_no_targets(self) -> None:
+        """Test reset_safeguard_policy fails without targets."""
+        with pytest.raises(ValueError, match="Either agents or groupchat_manager must be provided"):
+            reset_safeguard_policy()
 
     def test_invalid_agent_names(self, mock_agent: Any) -> None:
         """Test validation fails with invalid agent names."""
-        manifest = {
+        policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
@@ -396,4 +449,4 @@ class TestApplySafeguards:
         }
 
         with pytest.raises(ValueError, match="Agent name validation failed"):
-            apply_safeguards(agents=[mock_agent], manifest=manifest)
+            apply_safeguard_policy(agents=[mock_agent], policy=policy)

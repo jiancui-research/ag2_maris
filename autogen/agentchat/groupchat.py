@@ -1060,7 +1060,7 @@ class GroupChat:
         dst_agent_name: str,
         message_content: str,
     ) -> str | None:
-        """Run manifest-driven inter-agent guardrails, if any are configured.
+        """Run policy-driven inter-agent guardrails, if any are configured.
 
         Returns optional replacement content when a guardrail triggers.
         """
