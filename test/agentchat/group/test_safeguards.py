@@ -151,7 +151,10 @@ class TestInvalidPolicies:
             "agent_environment_safeguards": {
                 "llm_interaction": [
                     {
-                        "pattern": r"\btest\b"
+                        "check_method": "regex",
+                        "message_source": "agent1",
+                        "message_destination": "llm",
+                        "pattern": r"\btest\b",
                         # Missing action field
                     }
                 ]
@@ -396,6 +399,8 @@ class TestResetSafeguards:
             "safeguard_llm_outputs": [],
             "safeguard_human_inputs": [],
         }
+        # Make sure the agent doesn't have reset_safeguards method so it uses fallback
+        del agent.reset_safeguards
         return agent
 
     def test_reset_safeguards_from_agents(self, mock_agent: Any) -> None:
@@ -414,7 +419,7 @@ class TestResetSafeguards:
 
         mock_agent.hook_lists["safeguard_tool_inputs"].append(mock_safeguard_hook)
         mock_agent.hook_lists["safeguard_tool_inputs"].append(mock_other_hook)
-        mock_agent.hook_lists["process_message_before_sendme "].append(mock_safeguard_hook)
+        mock_agent.hook_lists["process_message_before_send"].append(mock_safeguard_hook)
 
         # Reset safeguards
         reset_safeguard_policy(agents=[mock_agent])
@@ -448,5 +453,5 @@ class TestResetSafeguards:
             }
         }
 
-        with pytest.raises(ValueError, match="Agent name validation failed"):
+        with pytest.raises(ValueError, match="Policy validation failed"):
             apply_safeguard_policy(agents=[mock_agent], policy=policy)

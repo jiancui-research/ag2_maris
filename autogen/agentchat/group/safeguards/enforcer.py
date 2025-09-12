@@ -41,7 +41,7 @@ class SafeguardEnforcer:
 
         # Create mask agent for content masking
         if self.mask_llm_config:
-            from ..conversable_agent import ConversableAgent
+            from ...conversable_agent import ConversableAgent
 
             self.mask_agent = ConversableAgent(
                 name="mask_agent",
@@ -97,100 +97,7 @@ class SafeguardEnforcer:
         from .validator import SafeguardValidator
 
         validator = SafeguardValidator(self.policy)
-        validator.validate_policy()
-
-    def _validate_agent_names(self, agent_names: list[str]) -> None:
-        """Validate that agent names referenced in policy actually exist."""
-        available_agents = set(agent_names)
-
-        # Check inter-agent safeguards
-        if "inter_agent_safeguards" in self.policy:
-            inter_agent = self.policy["inter_agent_safeguards"]
-
-            # Check agent_transitions
-            for i, rule in enumerate(inter_agent.get("agent_transitions", [])):
-                src_agent = rule.get("message_src")
-                dst_agent = rule.get("message_dst")
-
-                # Skip wildcard patterns
-                if src_agent != "*" and src_agent not in available_agents:
-                    raise ValueError(
-                        f"agent_transitions[{i}] references unknown source agent: '{src_agent}'. Available agents: {sorted(available_agents)}"
-                    )
-
-                if dst_agent != "*" and dst_agent not in available_agents:
-                    raise ValueError(
-                        f"agent_transitions[{i}] references unknown destination agent: '{dst_agent}'. Available agents: {sorted(available_agents)}"
-                    )
-
-        # Check environment safeguards
-        if "agent_environment_safeguards" in self.policy:
-            env_rules = self.policy["agent_environment_safeguards"]
-
-            # Check tool_interaction rules - only support message_src/message_dst format
-            for i, rule in enumerate(env_rules.get("tool_interaction", [])):
-                # Only validate message_src/message_dst format
-                if (
-                    "message_src" in rule
-                    and "message_dst" in rule
-                    or "message_source" in rule
-                    and "message_destination" in rule
-                ):
-                    # Skip detailed validation since we can't distinguish agent vs tool names
-                    pass
-                elif "pattern" in rule and "message_source" not in rule and "message_src" not in rule:
-                    # Simple pattern rules are allowed
-                    pass
-                else:
-                    raise ValueError(
-                        f"tool_interaction[{i}] must use either (message_src, message_dst), (message_source, message_destination), or pattern-only format"
-                    )
-
-            # Check llm_interaction rules
-            for i, rule in enumerate(env_rules.get("llm_interaction", [])):
-                # New format
-                if "message_source" in rule and "message_destination" in rule:
-                    src = rule["message_source"]
-                    dst = rule["message_destination"]
-
-                    # Check agent references (LLM interactions have agent <-> llm)
-                    if src != "llm" and src.lower() != "llm" and src not in available_agents:
-                        raise ValueError(
-                            f"llm_interaction[{i}] references unknown agent: '{src}'. Available agents: {sorted(available_agents)}"
-                        )
-                    if dst != "llm" and dst.lower() != "llm" and dst not in available_agents:
-                        raise ValueError(
-                            f"llm_interaction[{i}] references unknown agent: '{dst}'. Available agents: {sorted(available_agents)}"
-                        )
-
-                # Legacy format
-                elif "message_src" in rule:
-                    agent_name = rule["message_src"]
-                    if agent_name not in available_agents:
-                        raise ValueError(
-                            f"llm_interaction[{i}] references unknown agent: '{agent_name}'. Available agents: {sorted(available_agents)}"
-                        )
-
-                elif "agent_name" in rule:
-                    agent_name = rule["agent_name"]
-                    if agent_name not in available_agents:
-                        raise ValueError(
-                            f"llm_interaction[{i}] references unknown agent: '{agent_name}'. Available agents: {sorted(available_agents)}"
-                        )
-
-            # Check user_interaction rules
-            for i, rule in enumerate(env_rules.get("user_interaction", [])):
-                agent_name = rule.get("agent")
-                if agent_name and agent_name not in available_agents:
-                    raise ValueError(
-                        f"user_interaction[{i}] references unknown agent: '{agent_name}'. Available agents: {sorted(available_agents)}"
-                    )
-
-    def _validate_tool_names(self, tool_names: list[str]) -> None:  # pylint: disable=unused-argument
-        """Validate that tool names referenced in policy actually exist."""
-        # Skip tool name validation since message_src/message_dst format
-        # doesn't explicitly separate tool names and we can't reliably distinguish them
-        pass
+        validator.validate_policy_structure()
 
     def _parse_inter_agent_rules(self) -> list[dict[str, Any]]:
         """Parse inter-agent safeguard rules from policy."""

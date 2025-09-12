@@ -184,30 +184,30 @@ def apply_safeguard_policy(
     else:
         raise ValueError("Either agents or groupchat_manager must be provided")
 
-    # Validate agent names referenced in policy
-    try:
-        enforcer._validate_agent_names(all_agent_names)
-    except ValueError as e:
-        raise ValueError(f"Agent name validation failed: {e}")
-
-    # Build agent-to-tool mapping for tool name validation
-    all_tool_names = []
+    # Build agent-to-tool mapping for validation
+    agent_tool_mapping = {}
     for agent in target_agents:
-        if hasattr(agent, "tool_names") and agent.tool_names:
-            all_tool_names.extend(agent.tool_names)
-        elif hasattr(agent, "_tools") and agent._tools:
-            # Try to extract tool names from tool objects
-            for tool in agent._tools:
-                if hasattr(tool, "name"):
-                    all_tool_names.append(tool.name)
-                elif hasattr(tool, "__name__"):
-                    all_tool_names.append(tool.__name__)
+        agent_tools = []
 
-    if all_tool_names:
-        try:
-            enforcer._validate_tool_names(all_tool_names)
-        except ValueError as e:
-            raise ValueError(f"Tool name validation failed: {e}")
+        # Get tools from the tools property (Tool objects)
+        if hasattr(agent, "tools"):
+            for tool in agent.tools:
+                agent_tools.append(tool.name)
+
+        # Get tools from function_map (functions registered with @register_for_execution)
+        if hasattr(agent, "function_map"):
+            agent_tools.extend(agent.function_map.keys())
+
+        agent_tool_mapping[agent.name] = agent_tools
+
+    # Validate policy including agent names and tool names
+    try:
+        from .validator import SafeguardValidator
+
+        validator = SafeguardValidator(enforcer.policy)  # Use enforcer's loaded policy dict
+        validator.validate_policy_complete(agent_names=all_agent_names, agent_tool_mapping=agent_tool_mapping)
+    except ValueError as e:
+        raise ValueError(f"Policy validation failed: {e}")
 
     # Apply hooks to each agent
     for agent in target_agents:

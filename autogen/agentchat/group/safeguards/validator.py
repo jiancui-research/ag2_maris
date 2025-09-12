@@ -19,8 +19,8 @@ class SafeguardValidator:
         """
         self.policy = policy
 
-    def validate_policy(self) -> None:
-        """Validate policy format and syntax."""
+    def validate_policy_structure(self) -> None:
+        """Validate policy format and syntax only."""
         if not isinstance(self.policy, dict):
             raise ValueError("Policy must be a dictionary")
 
@@ -31,6 +31,20 @@ class SafeguardValidator:
         # Validate environment safeguards
         if "agent_environment_safeguards" in self.policy:
             self._validate_environment_safeguards()
+
+    def validate_policy_complete(self, agent_names: list[str], agent_tool_mapping: dict[str, list[str]]) -> None:
+        """Validate agent and tool names (assumes policy structure already validated).
+
+        Args:
+            agent_names: List of available agent names for validation
+            agent_tool_mapping: Mapping of agent names to their tool names
+        """
+        # Validate agent names
+        self.validate_agent_names(agent_names)
+
+        # Validate tool names if any tools exist
+        if any(tools for tools in agent_tool_mapping.values()):
+            self.validate_tool_names(agent_tool_mapping, agent_names)
 
     def _validate_inter_agent_safeguards(self) -> None:
         """Validate inter-agent safeguards section."""
