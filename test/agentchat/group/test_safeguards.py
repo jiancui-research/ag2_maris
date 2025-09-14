@@ -31,8 +31,8 @@ class TestSafeguardEnforcer:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "regex",
                         "pattern": r"\btest\b",
                         "violation_response": "block",
@@ -54,7 +54,7 @@ class TestSafeguardEnforcer:
 
     def test_missing_required_fields(self) -> None:
         """Test validation fails when required fields are missing."""
-        invalid_policy = {"inter_agent_safeguards": {"agent_transitions": [{"message_src": "agent1"}]}}
+        invalid_policy = {"inter_agent_safeguards": {"agent_transitions": [{"message_source": "agent1"}]}}
 
         with pytest.raises(ValueError, match="missing required field"):
             SafeguardEnforcer(policy=invalid_policy)
@@ -64,7 +64,7 @@ class TestSafeguardEnforcer:
         invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
-                    {"message_src": "agent1", "message_dst": "agent2", "check_method": "invalid_method"}
+                    {"message_source": "agent1", "message_destination": "agent2", "check_method": "invalid_method"}
                 ]
             }
         }
@@ -82,8 +82,8 @@ class TestInvalidPolicies:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "pattern": r"\btest\b",
                         "violation_response": "block",
                     }
@@ -99,7 +99,12 @@ class TestInvalidPolicies:
         invalid_policy = {
             "inter_agent_safeguards": {
                 "agent_transitions": [
-                    {"message_src": "agent1", "message_dst": "agent2", "check_method": "regex", "pattern": r"\btest\b"}
+                    {
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
+                        "check_method": "regex",
+                        "pattern": r"\btest\b",
+                    }
                 ]
             }
         }
@@ -170,8 +175,8 @@ class TestInvalidPolicies:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "llm",
                         "violation_response": "block",
                         # Missing custom_prompt or disallow_item
@@ -189,8 +194,8 @@ class TestInvalidPolicies:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "regex",
                         "violation_response": "block",
                         # Missing pattern field
@@ -208,8 +213,8 @@ class TestInvalidPolicies:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "regex",
                         "pattern": "[invalid regex(",  # Invalid regex
                         "violation_response": "block",
@@ -267,8 +272,8 @@ class TestSafeguardChecks:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "regex",
                         "pattern": r"\bpassword\b",
                         "violation_response": "block",
@@ -298,8 +303,8 @@ class TestSafeguardChecks:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "llm",
                         "custom_prompt": "Check content",
                         "violation_response": "block",
@@ -321,8 +326,8 @@ class TestSafeguardChecks:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "agent1",
-                        "message_dst": "agent2",
+                        "message_source": "agent1",
+                        "message_destination": "agent2",
                         "check_method": "regex",
                         "pattern": r"\btest\b",
                         "violation_response": "mask",
@@ -360,8 +365,8 @@ class TestApplySafeguards:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "test_agent",
-                        "message_dst": "*",
+                        "message_source": "test_agent",
+                        "message_destination": "*",
                         "check_method": "regex",
                         "pattern": r"\btest\b",
                         "violation_response": "block",
@@ -443,8 +448,8 @@ class TestResetSafeguards:
             "inter_agent_safeguards": {
                 "agent_transitions": [
                     {
-                        "message_src": "unknown_agent",
-                        "message_dst": "test_agent",
+                        "message_source": "unknown_agent",
+                        "message_destination": "test_agent",
                         "check_method": "regex",
                         "pattern": r"test",
                         "violation_response": "block",

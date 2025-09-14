@@ -114,7 +114,7 @@ class SafeguardEnforcer:
             if check_method == "llm":
                 if not self.safeguard_llm_config:
                     raise ValueError(
-                        f"safeguard_llm_config is required for LLM-based guardrail: {rule['message_src']} -> {rule['message_dst']}"
+                        f"safeguard_llm_config is required for LLM-based guardrail: {rule['message_source']} -> {rule['message_destination']}"
                     )
 
                 # Handle different LLM check types
@@ -128,7 +128,7 @@ class SafeguardEnforcer:
 
                 else:
                     raise ValueError(
-                        f"Either custom_prompt or disallow_item must be provided for LLM guardrail: {rule['message_src']} -> {rule['message_dst']}"
+                        f"Either custom_prompt or disallow_item must be provided for LLM guardrail: {rule['message_source']} -> {rule['message_destination']}"
                     )
 
                 # Create LLM guardrail - handle dict config by converting to LLMConfig
@@ -137,7 +137,7 @@ class SafeguardEnforcer:
                     llm_config = LLMConfig(config_list=[llm_config])
 
                 guardrail = LLMGuardrail(
-                    name=f"llm_guard_{rule['message_src']}_{rule['message_dst']}",
+                    name=f"llm_guard_{rule['message_source']}_{rule['message_destination']}",
                     condition=condition,
                     target=TransitionTarget(),
                     llm_config=llm_config,
@@ -148,7 +148,7 @@ class SafeguardEnforcer:
                 if "pattern" in rule:
                     # Regex pattern guardrail
                     guardrail = RegexGuardrail(
-                        name=f"regex_guard_{rule['message_src']}_{rule['message_dst']}",
+                        name=f"regex_guard_{rule['message_source']}_{rule['message_destination']}",
                         condition=rule["pattern"],
                         target=TransitionTarget(),
                         activation_message=rule.get("activation_message", "Regex pattern matched"),
@@ -157,8 +157,8 @@ class SafeguardEnforcer:
             # Add rule with guardrail
             parsed_rule = {
                 "type": "agent_transition",
-                "source": rule["message_src"],
-                "target": rule["message_dst"],
+                "source": rule["message_source"],
+                "target": rule["message_destination"],
                 "action": action,
                 "guardrail": guardrail,
                 "activation_message": rule.get("activation_message", "Content blocked by safeguard"),
@@ -210,7 +210,7 @@ class SafeguardEnforcer:
                     "message_destination": rule["message_destination"],
                     "check_method": "llm",
                     "action": action,
-                    "message": rule.get("activation_message", rule.get("message", "LLM blocked tool output")),
+                    "activation_message": rule.get("activation_message", "LLM blocked tool output"),
                 }
 
                 # Add LLM-specific parameters
@@ -237,7 +237,7 @@ class SafeguardEnforcer:
                     "check_method": "regex",
                     "pattern": rule["pattern"],
                     "action": action,
-                    "message": rule.get("message", "Content blocked by safeguard"),
+                    "activation_message": rule.get("activation_message", "Content blocked by safeguard"),
                 })
             else:
                 raise ValueError(
@@ -261,7 +261,7 @@ class SafeguardEnforcer:
                     "message_destination": rule["message_destination"],
                     "check_method": "llm",
                     "action": action,
-                    "message": rule.get("message", "LLM blocked content"),
+                    "activation_message": rule.get("activation_message", "LLM blocked content"),
                 }
 
                 # Add LLM-specific parameters
@@ -288,7 +288,7 @@ class SafeguardEnforcer:
                     "check_method": "regex",
                     "pattern": rule["pattern"],
                     "action": action,
-                    "message": rule.get("message", "Content blocked by safeguard"),
+                    "activation_message": rule.get("activation_message", "Content blocked by safeguard"),
                 })
             else:
                 raise ValueError(
@@ -928,7 +928,7 @@ class SafeguardEnforcer:
                         content=data,
                         disallow_items=rule.get("disallow_item", []),
                         explanation=explanation,
-                        custom_message=rule.get("message"),
+                        custom_message=rule.get("activation_message"),
                         pattern=rule.get("pattern"),
                         guardrail_type=guardrail_type,
                         source_agent=source_name,
