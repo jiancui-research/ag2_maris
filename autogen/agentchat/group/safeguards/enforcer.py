@@ -128,7 +128,6 @@ class SafeguardEnforcer:
 
                 else:
                     raise ValueError(
-
                         f"Either custom_prompt or disallow_item must be provided for LLM guardrail: {rule['message_source']} -> {rule['message_destination']}"
                     )
 
