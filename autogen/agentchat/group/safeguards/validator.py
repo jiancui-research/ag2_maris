@@ -62,7 +62,7 @@ class SafeguardValidator:
                     raise ValueError(f"agent_transitions[{i}] must be a dictionary")
 
                 # Required fields
-                required_fields = ["message_src", "message_dst"]
+                required_fields = ["message_source", "message_destination"]
                 for field in required_fields:
                     if field not in rule:
                         raise ValueError(f"agent_transitions[{i}] missing required field: {field}")
@@ -287,8 +287,8 @@ class SafeguardValidator:
 
             # Check agent_transitions
             for i, rule in enumerate(inter_agent.get("agent_transitions", [])):
-                src_agent = rule.get("message_src")
-                dst_agent = rule.get("message_dst")
+                src_agent = rule.get("message_source")
+                dst_agent = rule.get("message_destination")
 
                 # Skip wildcard patterns
                 if src_agent != "*" and src_agent not in available_agents:
@@ -305,23 +305,18 @@ class SafeguardValidator:
         if "agent_environment_safeguards" in self.policy:
             env_rules = self.policy["agent_environment_safeguards"]
 
-            # Check tool_interaction rules - only support message_src/message_dst format
+            # Check tool_interaction rules - only support message_source/message_destination format
             for i, rule in enumerate(env_rules.get("tool_interaction", [])):
-                # Only validate message_src/message_dst format
-                if (
-                    "message_src" in rule
-                    and "message_dst" in rule
-                    or "message_source" in rule
-                    and "message_destination" in rule
-                ):
+                # Only validate message_source/message_destination format
+                if "message_source" in rule and "message_destination" in rule:
                     # Skip detailed validation since we can't distinguish agent vs tool names
                     pass
-                elif "pattern" in rule and "message_source" not in rule and "message_src" not in rule:
+                elif "pattern" in rule and "message_source" not in rule:
                     # Simple pattern rules are allowed
                     pass
                 else:
                     raise ValueError(
-                        f"tool_interaction[{i}] must use either (message_src, message_dst), (message_source, message_destination), or pattern-only format"
+                        f"tool_interaction[{i}] must use either (message_source, message_destination) or pattern-only format"
                     )
 
             # Check llm_interaction rules
@@ -339,14 +334,6 @@ class SafeguardValidator:
                     if dst != "llm" and dst.lower() != "llm" and dst not in available_agents:
                         raise ValueError(
                             f"llm_interaction[{i}] references unknown agent: '{dst}'. Available agents: {sorted(available_agents)}"
-                        )
-
-                # Legacy format
-                elif "message_src" in rule:
-                    agent_name = rule["message_src"]
-                    if agent_name not in available_agents:
-                        raise ValueError(
-                            f"llm_interaction[{i}] references unknown agent: '{agent_name}'. Available agents: {sorted(available_agents)}"
                         )
 
                 elif "agent_name" in rule:
@@ -391,16 +378,6 @@ class SafeguardValidator:
                     # Validate agent-tool relationships
                     self._validate_agent_tool_relationship(
                         i, "message_source", src, dst, available_agents, agent_tool_mapping, all_available_tools
-                    )
-
-                # Check legacy message_src/message_dst format
-                elif "message_src" in rule and "message_dst" in rule:
-                    src = rule["message_src"]
-                    dst = rule["message_dst"]
-
-                    # Validate agent-tool relationships
-                    self._validate_agent_tool_relationship(
-                        i, "message_src", src, dst, available_agents, agent_tool_mapping, all_available_tools
                     )
 
     def _validate_agent_tool_relationship(
